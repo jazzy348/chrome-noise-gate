@@ -93,7 +93,7 @@
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }, { capture: true, passive: true });
 
-  // Volume mirroring — createMediaElementSource bypasses el.volume/el.muted
+  // Volume mirroring, createMediaElementSource bypasses el.volume/el.muted
   function createVolumeSync(el, gainNode) {
     function syncGain() {
       gainNode.gain.value = el.muted ? 0 : el.volume;
@@ -112,23 +112,29 @@
 
   async function hookElement(el) {
     if (processedElements.has(el)) return;
+    // Mark immediately, before any await, so concurrent calls are blocked
+    // even while bootstrap() is in progress.
+    processedElements.set(el, true);
 
     if (!audioCtxReady) {
       const isAudible = !el.muted && el.volume > 0;
 
       if (isAudible) {
+        // Path A: try to bootstrap immediately
         const ok = await bootstrap();
         if (!ok) {
+          // Autoplay blocked, clear the mark so deferral can re-hook later
+          processedElements.delete(el);
           deferToElementEvents(el);
           return;
         }
       } else {
+        // Path B: muted/silent, clear mark and defer to element-level events
+        processedElements.delete(el);
         deferToElementEvents(el);
         return;
       }
     }
-
-    processedElements.set(el, true);
 
     try {
       let sourceNode;
@@ -203,6 +209,8 @@
 
     async function tryHook() {
       if (el.muted || el.volume === 0) return;
+      el.removeEventListener('volumechange', tryHook);
+      el.removeEventListener('play', tryHook);
       const ok = await bootstrap();
       if (ok) hookElement(el);
     }
